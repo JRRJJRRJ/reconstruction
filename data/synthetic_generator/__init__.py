@@ -1,0 +1,1 @@
+from .generate_network import get_synthetic_hypergraph
