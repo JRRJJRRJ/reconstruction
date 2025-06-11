@@ -88,6 +88,6 @@ for t in range(1, T):
 os.makedirs("data", exist_ok=True)
 with open("data/ising_time_series.csv", "w", newline="") as f:
     writer = csv.writer(f)
-writer.writerows(states)
+    writer.writerows(states)
 
 print("✅ Ising 高阶动力学时间序列已保存至 data/ising_time_series.csv")

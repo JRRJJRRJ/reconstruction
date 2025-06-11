@@ -109,6 +109,8 @@ def get_synthetic_hypergraph():
 
 if __name__ == "__main__":
     G, k3_edges, k4_edges = main()
+    # 保存为边列表文件
+    nx.write_edgelist(G, "data/synthetic_generator/graph_edges.txt", data=False)
 
     # 可视化（可选）
     try:
