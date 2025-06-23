@@ -1,128 +1,312 @@
 import numpy as np
 import pandas as pd
 import networkx as nx
-from itertools import combinations
-from collections import defaultdict
-from sklearn.linear_model import Lasso
-from community_detection.PCDMS import PCDMS  # ✅ 使用包方式导入
+from sklearn.linear_model import LassoCV
+from sklearn.cluster import KMeans
+import itertools
+from typing import List, Tuple, Dict
+# reconstruction/High_order-Reconstruct.py
+from community_detection.PCDMS import PCDMS
 
-# -------------------------------
-# -------------------------------
-# 工具函数：三阶完全连接体查找
-# -------------------------------
-def find_k_cliques(G, k):
-    cliques = []
-    for nodes in combinations(G.nodes(), k):
-        if all(G.has_edge(u, v) for u, v in combinations(nodes, 2)):
-            cliques.append(tuple(sorted(nodes)))
-    return cliques
 
-# -------------------------------
-# 节点指标计算（PC、MPS、AC）
-# -------------------------------
-def compute_pc(G, node_community):
-    pc = {}
-    for node in G.nodes():
-        k_v = G.degree[node]
-        if k_v == 0:
-            pc[node] = 0
-            continue
-        community_edges = defaultdict(int)
-        for neighbor in G.neighbors(node):
-            c = node_community[neighbor]
-            community_edges[c] += 1
-        pc[node] = 1 - sum((count / k_v) ** 2 for count in community_edges.values())
-    return pc
+def load_data(ts_path, graph_path):
+    """
+    读取时间序列数据和图结构
+    """
+    # 正确读取时间序列：无列名、无时间列
+    df = pd.read_csv(ts_path, header=None)
+    df.columns = list(map(str, range(df.shape[1])))  # 或用 range(df.shape[1]) 得到整数列
 
-def compute_mps_k(G, k_cliques):
-    mps = {n: 0 for n in G.nodes()}
-    for clique in k_cliques:
-        for n in clique:
-            mps[n] += 1
-    total_cliques = len(k_cliques)
-    return {n: mps[n] / total_cliques if total_cliques > 0 else 0 for n in G.nodes()}
+    # 正确读取图
+    try:
+        G = nx.read_edgelist(graph_path, nodetype=str)
+    except Exception:
+        G = nx.read_edgelist(graph_path, delimiter=',', nodetype=str)
 
-def compute_ac(ts_matrix):
-    # ts_matrix: shape (T, N)
-    T = ts_matrix.shape[0]
-    return {
-        n: np.count_nonzero(ts_matrix[:, n] == 1) / T
-        for n in range(ts_matrix.shape[1])
-    }
+    return df, G
 
-# -------------------------------
-# 主函数：两阶段重构主程序（Python版 LVexact）
-# -------------------------------
-def reconstruct_high_order(ts_file, G, alpha=0.4, beta=0.3, gamma=0.3, top_k_percent=5):
-    # 读取时间序列
-    ts = pd.read_csv(ts_file, header=None).values  # shape: (T, N)
-    T, N = ts.shape
 
-    # Step 1: 社区划分
-    pcdms_model = PCDMS(k=10, verbose=False)
-    node_community = pcdms_model.fit(G)
-    communities = pcdms_model.get_communities()
+def detect_communities(G, k=5, method='pcdms'):
+    """
+    使用PCDMS进行社区检测。
 
-    # Step 2: 计算 PC、MPS、AC
-    pc_dict = compute_pc(G, node_community)
-    mps_dict = compute_mps_k(G, find_k_cliques(G, 3))
-    ac_dict = compute_ac(ts)
+    参数:
+        G: networkx.Graph，输入图
+        k: int，社区数量
+        method: str，当前仅支持 'pcdms'
 
-    # Step 3: 计算 w(v)
-    w = {
-        n: alpha * pc_dict[n] + beta * ac_dict[n] + gamma * mps_dict[n]
-        for n in G.nodes()
-    }
+    返回:
+        communities: List[List[node]] 社区列表
+        node_assignments: Dict[node, community_id] 节点到社区编号的映射
+    """
+    if method == 'pcdms':
+        model = PCDMS(k=k, init_method='clustering', verbose=True)
+        node_assignments = model.fit(G)
+        communities = model.get_communities()
+        return communities, node_assignments
+    else:
+        raise NotImplementedError(f"不支持的社区检测方法: {method}")
 
-    # Step 4: 筛选关键节点
-    threshold = np.percentile(list(w.values()), 100 - top_k_percent)
-    global_nodes = [n for n in G.nodes() if w[n] >= threshold]
 
-    # Step 5: 社区内重构（使用一阶+三阶特征 + Lasso）
+def reconstruct_community(community: List[str], df: pd.DataFrame, needshow: int = 0) -> Dict:
+    """
+    对一个社区中的每个节点进行三阶高阶相互作用重构 (使用Lasso)。
+    参数:
+        community (list of str): 社区内节点列表
+        df (pd.DataFrame): 时间序列数据 (行:时间, 列:节点)
+    返回:
+        results (dict): 键为 (target, influencer)，其中 influencer 为单节点或节点二元组, 值为回归系数 (float)。
+    """
     results = {}
-    for comm in communities:
-        sub_ts = ts[:, comm]  # shape: (T, m)
-        m = len(comm)
-
-        for idx_i, i in enumerate(comm):
-            features = []
-            targets = []
-            for t in range(1, T - 1):
-                row = []
-                # pairwise x_i x_j
-                for idx_j, j in enumerate(comm):
-                    if j != i:
-                        row.append(sub_ts[t, idx_i] * sub_ts[t, idx_j])
-                # high-order x_i x_j x_k
-                for idx_j, j in enumerate(comm):
-                    for idx_k, k in enumerate(comm):
-                        if j < k and i != j and i != k:
-                            row.append(sub_ts[t, idx_i] * sub_ts[t, idx_j] * sub_ts[t, idx_k])
-                features.append(row)
-                dy = (sub_ts[t + 1, idx_i] - sub_ts[t - 1, idx_i]) / 2  # 中心差分
-                targets.append(dy)
-            model = Lasso(alpha=0.001)
-            model.fit(features, targets)
-            results[i] = model.coef_
-
-    # Step 6: 全局重构（仅对关键节点）
-    for i in global_nodes:
-        features = []
-        targets = []
-        for t in range(1, T - 1):
-            row = []
-            for j in range(N):
-                if j != i:
-                    row.append(ts[t, i] * ts[t, j])
-            for j in range(N):
-                for k in range(j + 1, N):
-                    if i != j and i != k:
-                        row.append(ts[t, i] * ts[t, j] * ts[t, k])
-            features.append(row)
-            dy = (ts[t + 1, i] - ts[t - 1, i]) / 2
-            targets.append(dy)
-        model = Lasso(alpha=0.001)
-        model.fit(features, targets)
-        results[i] = model.coef_
+    community = sorted(community)
+    # 提取社区时间序列
+    df_comm = df[list(map(str, community))]
+    X = df_comm.values  # shape (T, m)
+    T, m = X.shape
+    if T < 3:
+        return results  # 时间点不足以做中心差分
+    # 计算导数：中心差分 dX/dt ≈ (X[t+1] - X[t-1]) / 2
+    dXdt = (X[2:T, :] - X[0:T-2, :]) / 2.0  # shape (T-2, m)
+    for i, target in enumerate(community):
+        dY = dXdt[:, i]  # 目标节点的导数序列 (长度 T-2)
+        # 社区内部其他节点列表
+        others = [n for n in community if n != target]
+        if not others:
+            continue
+        # 自变量矩阵：取原数据的时间点1到T-2行作为输入
+        TS = X[1:T-1, :]  # shape (T-2, m)
+        # 线性项 (单节点影响)
+        others_idx = [community.index(n) for n in others]
+        X_lin = TS[:, others_idx]  # shape (T-2, len(others))
+        # 二元组乘积项 (对应三元组超边)
+        pair_indices = list(itertools.combinations(range(len(others_idx)), 2))
+        X_pair = []
+        for (p, q) in pair_indices:
+            X_pair.append(TS[:, others_idx[p]] * TS[:, others_idx[q]])
+        if X_pair:
+            X_pair = np.stack(X_pair, axis=1)  # shape (T-2, num_pairs)
+            X_design = np.hstack((X_lin, X_pair))
+        else:
+            X_design = X_lin
+        if X_design.size == 0:
+            continue
+        # 使用LassoCV回归求解系数
+        try:
+            lasso = LassoCV(cv=5, n_alphas=10, max_iter=10000).fit(X_design, dY)
+            coefs = lasso.coef_
+        except Exception:
+            from sklearn.linear_model import Lasso
+            lasso = Lasso(alpha=0.01, max_iter=10000).fit(X_design, dY)
+            coefs = lasso.coef_
+        # 提取非零系数
+        # 线性项 -> (target, node)
+        for j, node_j in enumerate(others):
+            if abs(coefs[j]) > 1e-6:
+                results[(target, node_j)] = coefs[j]
+        # 二元组乘积项 -> (target, (node_p, node_q))
+        num_lin = len(others)
+        for k, (p, q) in enumerate(pair_indices):
+            coeff = coefs[num_lin + k]
+            if abs(coeff) > 1e-6:
+                node_p = others[p]
+                node_q = others[q]
+                hyperedge = tuple(sorted((node_p, node_q)))
+                results[(target, hyperedge)] = coeff
 
     return results
+
+def compute_pc(node: str, communities: List[List[str]]) -> float:
+    """
+    计算节点参与度系数 PC (简单定义为节点所属社区数量)。
+    """
+    return float(sum(1 for comm in communities if node in comm))
+
+def compute_ac(G: nx.Graph, node: str) -> float:
+    """
+    计算节点聚类系数 AC（使用NetworkX聚类系数）。
+    """
+    return nx.clustering(G, node)
+
+def compute_mps_k(G: nx.Graph, node: str, k: int = 3) -> float:
+    """
+    计算节点参与的 k 阶团体数 (k=3 时为三角形数)。
+    """
+    if k == 3:
+        return float(nx.triangles(G, node))
+    else:
+        # 其它阶的团体数计算作为扩展接口，此处返回0
+        return 0.0
+
+def compute_node_score(G: nx.Graph, node: str, communities: List[List[str]], k: int = 3) -> float:
+    """
+    计算节点综合评分 w(v) = PC + AC + MPS_k。
+    """
+    pc = compute_pc(node, communities)
+    ac = compute_ac(G, node)
+    mps = compute_mps_k(G, node, k)
+    return pc + ac + mps
+
+def reconstruct_node_global(target: str, nodes: List[str], df: pd.DataFrame) -> Dict:
+    """
+    对给定关键节点进行全图范围的三阶高阶重构，返回该节点的重构结果。
+    参数:
+        target (str): 目标节点
+        nodes (list of str): 所有节点列表
+        df (pd.DataFrame): 时间序列数据
+    返回:
+        results (dict): 键为 (target, influencer)，influencer 为单节点或节点二元组, 值为回归系数。
+    """
+    results = {}
+    nodes = sorted(nodes)
+    df_all = df[nodes]
+    X = df_all.values
+    T, N = X.shape
+    if T < 3 or target not in nodes:
+        return results
+    dXdt = (X[2:T, :] - X[0:T-2, :]) / 2.0  # shape (T-2, N)
+    i = nodes.index(target)
+    dY = dXdt[:, i]
+    others = [n for n in nodes if n != target]
+    if not others:
+        return results
+    TS = X[1:T-1, :]
+    others_idx = [nodes.index(n) for n in others]
+    X_lin = TS[:, others_idx]
+    pair_indices = list(itertools.combinations(range(len(others_idx)), 2))
+    X_pair = []
+    for (p, q) in pair_indices:
+        X_pair.append(TS[:, others_idx[p]] * TS[:, others_idx[q]])
+    if X_pair:
+        X_pair = np.stack(X_pair, axis=1)
+        X_design = np.hstack((X_lin, X_pair))
+    else:
+        X_design = X_lin
+    if X_design.size == 0:
+        return results
+    try:
+        lasso = LassoCV(cv=5, n_alphas=10, max_iter=10000).fit(X_design, dY)
+        coefs = lasso.coef_
+    except Exception:
+        from sklearn.linear_model import Lasso
+        lasso = Lasso(alpha=0.01, max_iter=10000).fit(X_design, dY)
+        coefs = lasso.coef_
+    for j, node_j in enumerate(others):
+        if abs(coefs[j]) > 1e-6:
+            results[(target, node_j)] = coefs[j]
+    num_lin = len(others)
+    for k, (p, q) in enumerate(pair_indices):
+        coeff = coefs[num_lin + k]
+        if abs(coeff) > 1e-6:
+            node_p = others[p]
+            node_q = others[q]
+            hyperedge = tuple(sorted((node_p, node_q)))
+            results[(target, hyperedge)] = coeff
+    return results
+
+def merge_results(community_results: List[Dict], key_results: Dict) -> Dict:
+    """
+    合并所有社区的重构结果和关键节点的全局重构结果。
+    相同 (target, influencer) 在多个社区出现时取平均，关键节点结果覆盖社区结果。
+    """
+    merged = {}
+    temp = {}
+    # 收集社区结果
+    for res in community_results:
+        for (target, influ), w in res.items():
+            temp.setdefault((target, influ), []).append(w)
+    # 取平均
+    for (tgt, inf), weights in temp.items():
+        merged[(tgt, inf)] = float(np.mean(weights))
+    # 关键节点结果覆盖
+    for (target, influ), w in key_results.items():
+        merged[(target, influ)] = w
+    return merged
+
+def build_Y_matrix(merged_results: Dict, nodes: List[str]):
+    """
+    构建Y矩阵：维度为 N x (N+C)，其中 N = len(nodes)，C = 节点二元组总数。
+    前N列对应成对作用 (pair influence)，后C列对应三元组超边作用。
+    返回:
+        Y (np.ndarray): 构建的矩阵
+        col_names (list): 列名列表
+        nodes_sorted (list): 排序后的节点列表 (对应行)
+    """
+    nodes_sorted = sorted(nodes)
+    N = len(nodes_sorted)
+    # 所有节点二元组组合 (作为潜在超边)
+    triples = list(itertools.combinations(nodes_sorted, 2))
+    col_names = []
+    # 前 N 列：对作用，按照节点顺序
+    for node in nodes_sorted:
+        col_names.append(f"pair_{node}")
+    # 后 C 列：二元组 (与目标一起形成三元组超边)
+    for (i, j) in triples:
+        col_names.append(f"triple_{i}_{j}")
+    C = len(triples)
+    Y = np.zeros((N, N + C))
+    node_idx = {node: idx for idx, node in enumerate(nodes_sorted)}
+    for (target, influ), w in merged_results.items():
+        if isinstance(influ, tuple):
+            # 超边情况：(target, (i,j)) 对应列 "triple_i_j"
+            # 如果 influencer = (i, j)，超边为 (target, i, j)
+            i, j = influ
+            # 找到对应列
+            if (i, j) in triples:
+                col = triples.index((i, j)) + N
+                row = node_idx[target]
+                Y[row, col] = w
+        else:
+            # 成对作用：(target, j) 对应 pair_j 列
+            row = node_idx[target]
+            col = node_idx[influ]
+            Y[row, col] = w
+    return Y, col_names, nodes_sorted
+
+def extract_hyperedges(Y: np.ndarray, nodes: List[str], col_names: List[str]) -> List[Tuple]:
+    """
+    使用 KMeans 聚类确定阈值，从 Y 矩阵中提取强度超过阈值的超边（三元组）。
+    返回超边列表，每个超边为节点元组 (不含目标，示例输出为二元组标识)。
+    """
+    N, total_cols = Y.shape
+    C = total_cols - N
+    triple_cols = []
+    weights = []
+    # 收集每列的非零值平均幅度作为该列超边强度
+    for col in range(N, total_cols):
+        col_vals = Y[:, col]
+        nz = col_vals[np.nonzero(col_vals)]
+        if nz.size > 0:
+            w_avg = np.mean(np.abs(nz))
+            triple_cols.append(col)
+            weights.append(w_avg)
+    if not weights:
+        return []
+    weights = np.array(weights).reshape(-1, 1)
+    kmeans = KMeans(n_clusters=2, random_state=0).fit(weights)
+    centers = sorted(kmeans.cluster_centers_.flatten())
+    threshold = sum(centers) / 2.0
+    # 选取阈值以上的列
+    selected = [col for col, w in zip(triple_cols, weights.flatten()) if w >= threshold]
+    hyperedges = []
+    for col in selected:
+        name = col_names[col]
+        parts = name.split('_')
+        if parts[0] == 'triple' and len(parts) == 3:
+            _, i, j = parts
+            hyperedges.append((i, j))
+    return hyperedges
+
+def evaluate_hyperedges(predicted: List[Tuple], true: List[Tuple]):
+    """
+    计算预测超边与真实超边的 Precision, Recall, F1，并打印结果。
+    """
+    pred_set = set(tuple(sorted(x)) for x in predicted)
+    true_set = set(tuple(sorted(x)) for x in true)
+    tp = len(pred_set & true_set)
+    precision = tp / len(pred_set) if pred_set else 0.0
+    recall = tp / len(true_set) if true_set else 0.0
+    f1 = (2 * precision * recall / (precision + recall)) if (precision+recall)>0 else 0.0
+    print(f"Precision: {precision:.4f}")
+    print(f"Recall: {recall:.4f}")
+    print(f"F1 Score: {f1:.4f}")
+

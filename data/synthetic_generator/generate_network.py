@@ -70,6 +70,7 @@ def main():
 
     # 社区划分
     pcdms_model = PCDMS(k=10, verbose=False)
+    print(pcdms_model)
     node_community = pcdms_model.fit(G)
     communities = pcdms_model.get_communities()
 
@@ -86,7 +87,7 @@ def main():
     # 权重计算
     alpha, beta, gamma3, gamma4 = 0.4, 0.3, 0.2, 0.1
     w = {n: alpha * PC[n] + beta * AC[n] + gamma3 * MPS3[n] + gamma4 * MPS4[n] for n in G.nodes()}
-
+    print("w为：",w)
     # 生成高阶超边
     k3_edges = sample_k_hyperedges(G, w, k=3, num_edges=300)
     k4_edges = sample_k_hyperedges(G, w, k=4, num_edges=100) if any(MPS4.values()) else []
@@ -100,17 +101,31 @@ def main():
         for n in G.nodes():
             writer.writerow([n, PC[n], AC[n], MPS3[n], MPS4[n], w[n]])
 
+        # 保存三阶超边
+        with open("data/synthetic_generator/hyperedges_k3.txt", "w") as f3:
+            for edge in k3_edges:
+                f3.write(" ".join(map(str, edge)) + "\n")
+
+        # 保存四阶超边（若存在）
+        if k4_edges:
+            with open("data/synthetic_generator/hyperedges_k4.txt", "w") as f4:
+                for edge in k4_edges:
+                    f4.write(" ".join(map(str, edge)) + "\n")
+
+        # 保存为边列表文件
+        os.makedirs("data/synthetic_generator", exist_ok=True)
+        nx.write_edgelist(G, "data/synthetic_generator/graph_edges.txt", data=False)
+        print("图生成完毕")
     return G, k3_edges, k4_edges
+
+
 
 
 def get_synthetic_hypergraph():
     return main()
 
-
 if __name__ == "__main__":
     G, k3_edges, k4_edges = main()
-    # 保存为边列表文件
-    nx.write_edgelist(G, "data/synthetic_generator/graph_edges.txt", data=False)
 
     # 可视化（可选）
     try:
