@@ -1,12 +1,14 @@
 import numpy as np
 import pandas as pd
 import networkx as nx
-from sklearn.linear_model import LassoCV
+from sklearn.linear_model import Lasso, LassoCV
 from sklearn.cluster import KMeans
 import itertools
 from typing import List, Tuple, Dict
 # reconstruction/High_order-Reconstruct.py
 from community_detection.PCDMS import PCDMS
+import warnings
+from sklearn.exceptions import ConvergenceWarning
 
 
 def load_data(ts_path, graph_path):
@@ -146,63 +148,96 @@ def compute_node_score(G: nx.Graph, node: str, communities: List[List[str]], k: 
     mps = compute_mps_k(G, node, k)
     return pc + ac + mps
 
+
 def reconstruct_node_global(target: str, nodes: List[str], df: pd.DataFrame) -> Dict:
-    """
-    对给定关键节点进行全图范围的三阶高阶重构，返回该节点的重构结果。
-    参数:
-        target (str): 目标节点
-        nodes (list of str): 所有节点列表
-        df (pd.DataFrame): 时间序列数据
-    返回:
-        results (dict): 键为 (target, influencer)，influencer 为单节点或节点二元组, 值为回归系数。
-    """
-    results = {}
-    nodes = sorted(nodes)
-    df_all = df[nodes]
+    # 保持原始节点顺序!!!
+    nodes_original = nodes[:]  # 保留原始顺序
+    nodes_sorted = sorted(nodes)  # 仅用于数据对齐
+
+    # 检查基本条件
+    if target not in nodes_sorted:
+        return {"target not in nodes_sorted"}
+    df_all = df[nodes_sorted]  # 按排序后顺序取数据
     X = df_all.values
     T, N = X.shape
-    if T < 3 or target not in nodes:
-        return results
-    dXdt = (X[2:T, :] - X[0:T-2, :]) / 2.0  # shape (T-2, N)
-    i = nodes.index(target)
-    dY = dXdt[:, i]
-    others = [n for n in nodes if n != target]
-    if not others:
-        return results
-    TS = X[1:T-1, :]
-    others_idx = [nodes.index(n) for n in others]
-    X_lin = TS[:, others_idx]
-    pair_indices = list(itertools.combinations(range(len(others_idx)), 2))
-    X_pair = []
-    for (p, q) in pair_indices:
-        X_pair.append(TS[:, others_idx[p]] * TS[:, others_idx[q]])
-    if X_pair:
-        X_pair = np.stack(X_pair, axis=1)
-        X_design = np.hstack((X_lin, X_pair))
-    else:
-        X_design = X_lin
-    if X_design.size == 0:
-        return results
-    try:
-        lasso = LassoCV(cv=5, n_alphas=10, max_iter=10000).fit(X_design, dY)
-        coefs = lasso.coef_
-    except Exception:
-        from sklearn.linear_model import Lasso
-        lasso = Lasso(alpha=0.01, max_iter=10000).fit(X_design, dY)
-        coefs = lasso.coef_
-    for j, node_j in enumerate(others):
-        if abs(coefs[j]) > 1e-6:
-            results[(target, node_j)] = coefs[j]
-    num_lin = len(others)
-    for k, (p, q) in enumerate(pair_indices):
-        coeff = coefs[num_lin + k]
-        if abs(coeff) > 1e-6:
-            node_p = others[p]
-            node_q = others[q]
-            hyperedge = tuple(sorted((node_p, node_q)))
-            results[(target, hyperedge)] = coeff
-    return results
+    if T < 3:
+        return {" T < 3"}
 
+    # 计算导数 (中心差分)
+    dXdt = (X[2:] - X[:-2]) / 2.0  # (T-2, N)
+    target_idx = nodes_sorted.index(target)
+    dY = dXdt[:, target_idx]
+
+    # 使用原始节点顺序构建特征矩阵!!!
+    others = [n for n in nodes_original if n != target]  # 保持原始顺序
+    if not others:
+        return {"not others"}
+
+    # 准备特征矩阵 (T-2时间点)
+    TS = X[1:-1]  # (T-2, N)
+
+    # 获取其他节点在排序后列表中的索引
+    other_indices = [nodes_sorted.index(n) for n in others]
+    X_lin = TS[:, other_indices]  # 线性项
+
+    # 二阶交互项
+    X_pair = []
+    pair_nodes = []  # 记录交互项对应的节点对
+    for (idx1, n1), (idx2, n2) in itertools.combinations(enumerate(others), 2):
+        X_pair.append(TS[:, nodes_sorted.index(n1)] * TS[:, nodes_sorted.index(n2)])
+        pair_nodes.append((n1, n2))
+
+    # 合并特征矩阵
+    X_design = np.hstack([X_lin] + [np.array(X_pair).T] if X_pair else [])
+
+    # 检查特征维度有效性
+    if X_design.size == 0 or X_design.shape[0] < 2:
+        return {"X_design.size == 0 or X_design.shape[0] < 2"}
+
+    # 动态调整正则化参数
+    n_samples, n_features = X_design.shape
+    max_features = max(1, min(n_samples - 1, n_features // 2))
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", ConvergenceWarning)
+        try:
+            # 减少正则化强度: 降低eps, 增加n_alphas
+            lasso = LassoCV(
+                cv=min(5, n_samples),
+                n_alphas=50,
+                eps=1e-4,  # 扩展alpha搜索范围
+                max_iter=5000,
+                selection='random',  # 提高稳定性
+                tol=1e-4
+            ).fit(X_design, dY)
+            coefs = lasso.coef_
+        except Exception:
+            # 使用更弱的正则化回退
+            lasso = Lasso(
+                alpha=1e-5,  # 大幅降低正则化强度
+                max_iter=10000,
+                tol=1e-4,
+                warm_start=True
+            ).fit(X_design, dY)
+            coefs = lasso.coef_
+
+    # 提取有效特征
+    results = {}
+    threshold = 1e-7  # 降低系数阈值
+
+    # 线性项 (单节点)
+    for j, node_j in enumerate(others):
+        if abs(coefs[j]) > threshold:
+            results[(target, node_j)] = coefs[j]
+
+    # 二阶交互项
+    for k, (n1, n2) in enumerate(pair_nodes):
+        idx = len(others) + k
+        if idx < len(coefs) and abs(coefs[idx]) > threshold:
+            # 保持原始节点顺序
+            results[(target, (n1, n2))] = coefs[idx]
+
+    return results
 def merge_results(community_results: List[Dict], key_results: Dict) -> Dict:
     """
     合并所有社区的重构结果和关键节点的全局重构结果。
