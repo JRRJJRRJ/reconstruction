@@ -28,7 +28,7 @@ def load_data(ts_path, graph_path):
     return df, G
 
 
-def detect_communities(G, k=5, method='pcdms'):
+def detect_communities(G, k=5, method='pcdms', random_state=None):
     """
     使用PCDMS进行社区检测。
 
@@ -36,13 +36,14 @@ def detect_communities(G, k=5, method='pcdms'):
         G: networkx.Graph，输入图
         k: int，社区数量
         method: str，当前仅支持 'pcdms'
+        random_state: 随机种子
 
     返回:
         communities: List[List[node]] 社区列表
         node_assignments: Dict[node, community_id] 节点到社区编号的映射
     """
     if method == 'pcdms':
-        model = PCDMS(k=k, init_method='clustering', verbose=True)
+        model = PCDMS(k=k, init_method='clustering', verbose=True, random_state=random_state)
         node_assignments = model.fit(G)
         communities = model.get_communities()
         return communities, node_assignments

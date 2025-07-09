@@ -4,21 +4,44 @@ from scipy.optimize import minimize
 import time
 from collections import defaultdict
 
+import numpy as np
+import networkx as nx
+from scipy.optimize import minimize
+import time
+from collections import defaultdict
+
+np.random.seed(42)
+import numpy as np
+import networkx as nx
+from scipy.optimize import minimize
+import time
+from collections import defaultdict
+
 
 class PCDMS:
     def __init__(self, k, learning_rate=0.01, max_iters=100,
-                 tol=0.005, init_method='random', verbose=False):
+                 tol=0.005, init_method='random', verbose=False,
+                 random_state=None):  # 添加随机状态参数
         self.k = k
         self.eta = learning_rate
         self.max_iters = max_iters
         self.tol = tol
         self.init_method = init_method
         self.verbose = verbose
+        self.random_state = random_state  # 保存随机状态
         self.M = None
         self.communities = None
         self.node_assignments = None
         self.runtime = 0
-        self.neighbor_indices = None  # 新增：存储邻居索引
+        self.neighbor_indices = None
+
+        # 创建可复现的随机数生成器
+        if self.random_state is None:
+            self.rng = np.random.default_rng()
+        elif isinstance(self.random_state, int):
+            self.rng = np.random.default_rng(self.random_state)
+        else:
+            self.rng = self.random_state
 
     def fit(self, G):
         start_time = time.time()
@@ -58,7 +81,7 @@ class PCDMS:
                 )
                 self.M[i, :] = res.x
 
-            # 计算最大元素变化（与论文一致）
+            # 计算最大元素变化
             max_delta = np.max(np.abs(self.M - prev_M))
             if self.verbose:
                 print(f"Iteration {iter + 1}, Max Delta: {max_delta:.6f}")
@@ -81,23 +104,23 @@ class PCDMS:
         return self.node_assignments
 
     def _initialize_M(self):
-        """改进的初始化方法"""
+        """改进的初始化方法（添加随机种子控制）"""
         self.M = np.zeros((self.n_nodes, self.k))
 
         if self.init_method == 'random':
+            # 使用可复现的随机数生成器
             for i in range(self.n_nodes):
-                comm_idx = np.random.randint(0, self.k)
-                self.M[i, comm_idx] = np.random.rand()
+                comm_idx = self.rng.integers(0, self.k)
+                self.M[i, comm_idx] = self.rng.random()
 
         elif self.init_method == 'clustering':
             # 基于聚类系数的初始化
             clustering = nx.clustering(self.G)
             for i, node in enumerate(self.nodes):
                 cluster_coeff = clustering.get(node, 0.1)
-                comm_idx = np.random.randint(0, self.k)
+                comm_idx = self.rng.integers(0, self.k)  # 使用rng
                 self.M[i, comm_idx] = cluster_coeff
 
-        # 添加论文建议的localMinimumNeighborhood初始化
         elif self.init_method == 'lmn':
             # 简化的局部最小邻域初始化
             degrees = dict(self.G.degree())
@@ -110,13 +133,15 @@ class PCDMS:
                     comm_idx = np.argmax(self.M[min_idx, :])
                     self.M[i, comm_idx] = 1.0
                 else:
-                    comm_idx = np.random.randint(0, self.k)
+                    comm_idx = self.rng.integers(0, self.k)  # 使用rng
                     self.M[i, comm_idx] = 1.0
 
         # 归一化
         row_max = self.M.max(axis=1)
         row_max[row_max == 0] = 1
         self.M = self.M / row_max[:, np.newaxis]
+
+    # 其余方法保持不变...
 
     def _motif_probability(self, u_idx, v1_idx, v2_idx, c):
         """修正的概率计算"""
