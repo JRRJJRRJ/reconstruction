@@ -20,7 +20,7 @@ from collections import defaultdict
 
 class PCDMS:
     def __init__(self, k, learning_rate=0.01, max_iters=100,
-                 tol=0.005, init_method='random', verbose=False,
+                 tol=0.005, init_method='random', verbose=True,
                  random_state=None):  # 添加随机状态参数
         self.k = k
         self.eta = learning_rate

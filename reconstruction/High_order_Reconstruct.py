@@ -11,19 +11,53 @@ import warnings
 from sklearn.exceptions import ConvergenceWarning
 
 
-def load_data(ts_path, graph_path):
+def load_data(ts_path, graph_path, node_offset=1):
     """
-    读取时间序列数据和图结构
-    """
-    # 正确读取时间序列：无列名、无时间列
-    df = pd.read_csv(ts_path, header=None)
-    df.columns = list(map(str, range(df.shape[1])))  # 或用 range(df.shape[1]) 得到整数列
+    读取时间序列数据和图结构，确保节点标识一致
 
-    # 正确读取图
+    参数:
+        ts_path: 时间序列文件路径
+        graph_path: 图结构文件路径
+        node_offset: 节点ID偏移量（默认为1，表示图节点ID=时间序列列索引+1）
+    """
+    # 读取时间序列
+    df = pd.read_csv(ts_path, header=None)
+
+    # 创建节点映射：列索引 -> 图节点ID
+    # 例如：列0 -> '1', 列1 -> '2', ..., 列84 -> '85'
+    node_mapping = {i: str(i + node_offset) for i in range(df.shape[1])}
+
+    # 应用节点映射
+    df.columns = [node_mapping[i] for i in range(df.shape[1])]
+
+    # 读取图结构
     try:
         G = nx.read_edgelist(graph_path, nodetype=str)
     except Exception:
         G = nx.read_edgelist(graph_path, delimiter=',', nodetype=str)
+
+    # 验证一致性
+    ts_nodes = set(df.columns)
+    graph_nodes = set(G.nodes())
+
+    if ts_nodes != graph_nodes:
+        print(f"警告: 节点不一致 (TS: {len(ts_nodes)}, Graph: {len(graph_nodes)})")
+        print(f"TS独有节点: {ts_nodes - graph_nodes}")
+        print(f"Graph独有节点: {graph_nodes - ts_nodes}")
+
+        # 自动修复：添加缺失节点到图
+        missing_in_graph = ts_nodes - graph_nodes
+        if missing_in_graph:
+            print(f"添加缺失节点到图: {missing_in_graph}")
+            G.add_nodes_from(missing_in_graph)
+
+        # 自动修复：添加缺失节点到时间序列
+        missing_in_ts = graph_nodes - ts_nodes
+        if missing_in_ts:
+            print(f"添加缺失节点到时间序列: {missing_in_ts}")
+            for node in missing_in_ts:
+                df[node] = 0  # 添加全零列
+            df = df.reindex(sorted(df.columns), axis=1)  # 重新排序列
 
     return df, G
 

@@ -7,7 +7,7 @@ def load_edges(edge_file):
     edges = []
     with open(edge_file, 'r') as f:
         for line in f:
-            nodes = line.strip().split()
+            nodes = line.strip().split(',')
             if len(nodes) == 2:
                 edges.append((nodes[0], nodes[1]))
     return edges
@@ -16,7 +16,7 @@ def load_hyperedges(hyper_file):
     hyperedges = []
     with open(hyper_file, 'r') as f:
         for line in f:
-            nodes = line.strip().split()
+            nodes = line.strip().split(',')
             if len(nodes) >= 3:
                 hyperedges.append(nodes)
     return hyperedges
@@ -89,15 +89,21 @@ def simulate_time_series(paired_edges, hyperedges, node_list,
 
     return X, node2idx
 
-paired_edges = load_edges('Paired_connection_adjusted.txt')
-hyperedges = load_hyperedges('High_connection_adjusted.txt')
+paired_edges = load_edges('Thiers12/paired_connection')
+hyperedges = load_hyperedges('Thiers12/High_connection')
 all_nodes = sorted(set(
     [u for e in paired_edges for u in e] +
     [v for e in paired_edges for v in e] +  # 添加这行：补上成对边中每条边的另一个节点
     [node for h in hyperedges for node in h]  # 遍历所有高阶超边中的所有节点
 ))
 
+# 假设 simulate_time_series 已定义，且已导入 paired_edges、hyperedges、all_nodes
 
-simulate_time_series(paired_edges, hyperedges, all_nodes,
-                     T=100, output_csv_path='generated_time_series.csv')
+import os
+
+for T in range(1000, 20001, 1000):  # 从1000到20000，步长为1000
+    directory = f"Thiers12/T={T}"  # 注意去掉你原来写错的“·”
+    os.makedirs(directory, exist_ok=True)  # 若目录不存在则创建
+    output_path = f"{directory}/Thiers12_{T}.csv"
+    simulate_time_series(paired_edges, hyperedges, all_nodes, T=T, output_csv_path=output_path)
 

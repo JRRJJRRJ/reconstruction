@@ -1,22 +1,33 @@
 from reconstruction.High_order_Reconstruct import load_data
 import numpy as np
-ts_path = "./data1/sis_time_series.csv"
-graph_path = "./data1/graph_edges.txt"
+import networkx as nx
+import cProfile
 
-ts_path1 = "./RealNet_data/generated_time_series.csv"
-graph_path1 = "./RealNet_data/Paired_connection_adjusted_minus1.txt"
+ts_path1 = "./RealNet_data/hypertext2009/T=2000/hypertext2009_time_2000.csv"
+graph_path1 = "./RealNet_data/hypertext2009/paired_connection"
 
 np.random.seed(42)
 
-df, G = load_data(ts_path1, graph_path1)
+df, G = load_data(ts_path1, graph_path1, node_offset=1)
 
-missing_in_G = set(df.columns) - set(G.nodes)
-if missing_in_G:
-    print("missing_in_G:",missing_in_G)
-    print(f"警告：df 中存在 {len(missing_in_G)} 个节点未在 G 中出现，将添加进图中")
-    G.add_nodes_from(missing_in_G)
+df.columns = df.columns.astype(str)  # 列名转字符串
+# 图节点转字符串
+G = nx.relabel_nodes(G, {node: str(node) for node in G.nodes()})
 
-print(f"Loaded graph with {len(G.nodes())} nodes and {len(G.edges())} edges")
+# 验证结果
+print("\n=== 节点一致性验证 ===")
+print(f"时间序列节点数: {len(df.columns)}")
+print(f"图节点数: {len(G.nodes())}")
+print(f"交集节点数: {len(set(df.columns) & set(G.nodes()))}")
+print(f"时间序列独有节点: {set(df.columns) - set(G.nodes())}")
+print(f"图独有节点: {set(G.nodes()) - set(df.columns)}")
+
+
+#print(f"Loaded graph with {len(G.nodes())} nodes and {len(G.edges())} edges")
+
+print("Graph nodes:", sorted(G.nodes()))
+print("Graph nodes count:", len(G.nodes()))
+print("df columns count:", len(df.columns))
 
 # 社区划分  (目前只迭代了两轮）
 from reconstruction.High_order_Reconstruct import detect_communities
@@ -37,47 +48,34 @@ print(df.head())
 from reconstruction.High_order_Reconstruct import reconstruct_community
 InResult={}
 for idx, community in enumerate(communinties):
-    community = [int(node) for node in community]
-    print(f" 正在重构第 {idx + 1} 个社区，包含 {len(community)} 个节点")
+    # 过滤不存在于df的节点
+    valid_community = [node for node in community if node in df.columns]
+    if not valid_community:
+        print(f"社区 {idx} 无有效节点，跳过")
+        continue
 
-
-    result = reconstruct_community(community, df,1)
-
-    print(f" 第 {idx + 1} 个社区重构完成，共识别出 {len(result)} 条影响关系")
-
-    for key, val in result.items():
-        print(f"  {key} => {val:.4f}")
-
+    # 直接使用字符串节点
+    result = reconstruct_community(valid_community, df, 1)
     InResult.update(result)
 
 
 # 关键节点全局重构
-from reconstruction.High_order_Reconstruct import  compute_pc
-from reconstruction.High_order_Reconstruct import  compute_mps_k
-from reconstruction.High_order_Reconstruct import  compute_ac
-from reconstruction.High_order_Reconstruct import  compute_node_score
-from reconstruction.High_order_Reconstruct import reconstruct_node_global
-# 得分计算
+from reconstruction.High_order_Reconstruct import compute_node_score, reconstruct_node_global
 node_scores = {}
 for node in G.nodes:
-    score = compute_node_score(G, node, communinties, k=3)  # 这里默认 k=3
+    score = compute_node_score(G, node, communinties, k=3)
     node_scores[node] = score
 
-# 提取前5%的高分节点
 top_5_nodes = sorted(node_scores.items(), key=lambda x: x[1], reverse=True)[:5]
-# 加1并转成字符串
-top_5_nodes_plus1 = [str(int(node) + 1) for node, score in top_5_nodes]
-print("top_5_nodes_plus1:",top_5_nodes_plus1)
+# 保持字符串类型
+top_5_nodes_global = [node for node, score in top_5_nodes]
 
-# 全局重构
-nodes_candidate = [str(int(n)) for n in G.nodes]
 global_results = {}
-
-for target in top_5_nodes_plus1:
-    result = reconstruct_node_global(target, nodes_candidate, df)
+for target in top_5_nodes_global:
+    result = reconstruct_node_global(target, list(G.nodes), df)
     global_results.update(result)
-    print("目标节点为：", target)
-    print("results:", result)
+
+
 print("global_results:", global_results)
 print(result)
 print("InResult:", InResult)
@@ -149,7 +147,7 @@ print("merged_results:", merged_results)
 
 from index.F1_score import F1
 
-precision, recall, f1, metrics = F1("RealNet_data/High_connection.txt", merged_results)
+precision, recall, f1, metrics = F1("RealNet_data/hypertext2009/T=1000/compare", merged_results)
 print("precision:", precision)
 print("recall:", recall)
 print("f1:", f1)
