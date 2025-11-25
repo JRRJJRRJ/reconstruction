@@ -102,7 +102,7 @@ all_nodes = sorted(set(
 import os
 
 for T in range(1000, 20001, 1000):  # 从1000到20000，步长为1000
-    directory = f"Thiers12/T={T}"  # 注意去掉你原来写错的“·”
+    directory = f"LyonSchool/T={T}"  # 注意去掉你原来写错的“·”
     os.makedirs(directory, exist_ok=True)  # 若目录不存在则创建
     output_path = f"{directory}/Thiers12_{T}.csv"
     simulate_time_series(paired_edges, hyperedges, all_nodes, T=T, output_csv_path=output_path)

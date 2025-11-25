@@ -18,13 +18,14 @@ def generate_noise_triples(file_path: str, m: int, n: int) -> List[Tuple[int, in
     # 1. 读取文件中所有现有三元组
     existing_triples = set()
     with open(file_path, 'r') as f:
-        for line in f:
-            # 跳过空行
+        for idx, line in enumerate(f, start=1):
             if not line.strip():
                 continue
-            # 解析每行的三个整数
-            a, b, c = map(int, line.strip().split())
-            # 添加到集合（使用排序后的元组来忽略顺序）
+            parts = line.strip().split()
+            if len(parts) != 3:
+                print(f"⚠️ 第 {idx} 行出错: {line.strip()}")
+                continue
+            a, b, c = map(int, parts)
             existing_triples.add(tuple(sorted((a, b, c))))
 
     # 2. 计算所有可能的三元组总数
@@ -99,7 +100,7 @@ if __name__ == "__main__":
     # 数值范围上限
     n_value = 85
     # 需要生成的三元组数量
-    m_value = 500
+    m_value = 1000
 
     try:
         # 生成噪声三元组

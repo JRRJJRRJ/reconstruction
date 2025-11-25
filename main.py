@@ -55,7 +55,7 @@ def main():
     # 运行实验
     for exp in experiments:
         if "time_steps" in exp:  # 处理合成网络
-            print(f"\n🔬 Starting experiments for {exp['name']} network")
+            print(f"\n Starting experiments for {exp['name']} network")
             net_results = {}
 
             for T in exp["time_steps"]:
@@ -66,10 +66,10 @@ def main():
 
                 # 确保文件存在
                 if not all(os.path.exists(p) for p in [ts_path, graph_path, true_edges_path]):
-                    print(f"⚠️ Missing files for T={T}, skipping...")
+                    print(f" Missing files for T={T}, skipping...")
                     continue
 
-                print(f"  ⏳ Running T={T} (iterations={exp['iterations']})...")
+                print(f"   Running T={T} (iterations={exp['iterations']})...")
 
                 # 调用重构函数 - 这里调用run_reconstruction
                 result = run_reconstruction(
@@ -80,17 +80,17 @@ def main():
                 )
 
                 net_results[T] = result
-                print(f"  ✅ Completed T={T}! Avg F1: {result['f1']:.4f}")
+                print(f"   Completed T={T}! Avg F1: {result['f1']:.4f}")
 
             all_results[exp["name"]] = net_results
-            print(f"🎉 Finished all time steps for {exp['name']} network!")
+            print(f" Finished all time steps for {exp['name']} network!")
 
         else:  # 处理真实网络
-            print(f"\n🔬 Starting experiments for real network: {exp['name']}")
+            print(f"\n Starting experiments for real network: {exp['name']}")
 
             # 确保文件存在
             if not all(os.path.exists(exp[p]) for p in ["ts_path", "graph_path", "true_edges_path"]):
-                print(f"⚠️ Missing files for {exp['name']}, skipping...")
+                print(f" Missing files for {exp['name']}, skipping...")
                 continue
 
             # 调用重构函数 - 这里调用run_reconstruction
@@ -102,7 +102,7 @@ def main():
             )
 
             all_results[exp["name"]] = result
-            print(f"🎉 Finished {exp['name']}! Avg F1: {result['f1']:.4f}")
+            print(f" Finished {exp['name']}! Avg F1: {result['f1']:.4f}")
 
     # 计算总耗时
     total_time = time.time() - start_time
@@ -117,9 +117,9 @@ def main():
         json.dump(all_results, f, indent=4)
 
     print("\n" + "=" * 80)
-    print("🏁 All experiments completed!")
-    print(f"⏱️ Total time: {int(hours)}h {int(minutes)}m {int(seconds)}s")
-    print(f"📊 Results saved to: {result_file}")
+    print(" All experiments completed!")
+    print(f"️ Total time: {int(hours)}h {int(minutes)}m {int(seconds)}s")
+    print(f" Results saved to: {result_file}")
     print("=" * 80)
 
 
