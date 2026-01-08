@@ -9,12 +9,14 @@ from GetF1test import get_f1
 plt.rcParams['font.family'] = 'Times New Roman'
 plt.rcParams['axes.linewidth'] = 1.5  # 稍微加粗坐标轴
 
-# 四个真实网络的名称及其对应的文件名映射
+# 六个真实网络的名称及其对应的文件名映射
 network_file_mapping = {
     "Hypertext2009": "hy.txt",
     "Thiers12": "Th.txt",
     "InVS15": "IN.txt",
-    "LyonSchool": "ly.txt"
+    "LyonSchool": "ly.txt",
+    "SIS": "Ising.txt",
+    "Ising": "SIS.txt",
 }
 
 # 每个网络的最优迭代次数
@@ -22,7 +24,9 @@ optimal_iterations = {
     "Hypertext2009": 70,
     "Thiers12": 60,
     "InVS15": 80,
-    "LyonSchool": 50
+    "LyonSchool": 50,
+    "SIS":80,
+    "Ising":80
 }
 
 # 时间序列长度列表
@@ -42,7 +46,13 @@ method1_scores = {
                0.725, 0.714, 0.743],
     "LyonSchool": [0.026, 0.214, 0.444, 0.5194, 0.546, 0.68, 0.732, 0.775, 0.8132,
                    0.802, 0.857, 0.862, 0.916, 0.8875, 0.935, 0.9135, 0.924,
-                   0.9533, 0.9432, 0.968]
+                   0.9533, 0.9432, 0.968],
+    "SIS": [0.10, 0.182, 0.532, 0.7684, 0.8783, 0.923, 0.914, 0.934, 0.932,
+                       0.931, 0.933, 0.9234, 0.9315, 0.9345, 0.9289, 0.9343, 0.9324,
+                       0.9365, 0.9332, 0.9321],
+    "Ising": [0.026, 0.214, 0.444, 0.5194, 0.546, 0.68, 0.732, 0.775, 0.8132,
+              0.802, 0.817, 0.822, 0.816, 0.8175, 0.835, 0.8135, 0.824,
+              0.8233, 0.8132, 0.8268],
 }
 
 method2_scores = {
@@ -57,7 +67,13 @@ method2_scores = {
                0.651, 0.643, 0.647],
     "LyonSchool": [0.076, 0.151, 0.231, 0.342, 0.353, 0.420, 0.513, 0.684, 0.745,
                    0.732, 0.754, 0.783, 0.832, 0.843, 0.856, 0.846, 0.867,
-                   0.861, 0.871, 0.872]
+                   0.861, 0.871, 0.872],
+    "SIS": [0.016, 0.14, 0.344, 0.4194, 0.546, 0.682, 0.7321, 0.775, 0.8332,
+            0.802, 0.847, 0.862, 0.846, 0.8575, 0.8635, 0.8635, 0.8624,
+            0.8533, 0.852, 0.868],
+    "Ising": [0.06, 0.16, 0.256, 0.34, 0.446, 0.49, 0.632, 0.675, 0.7432,
+              0.802, 0.812, 0.812, 0.836, 0.8275, 0.835, 0.8335, 0.834,
+              0.833, 0.8292, 0.8368]
 }
 
 # 初始化存储结果的字典
@@ -106,9 +122,19 @@ for network in network_file_mapping.keys():
 
     your_method_scores[network] = scores
 
-# 绘制四个子图，每个网络一个 - 保持相同的子图布局
-fig, axes = plt.subplots(2, 2, figsize=(14, 10), dpi=400)
+# 绘制六个子图，每个网络一个 - 2行3列布局
+fig, axes = plt.subplots(2, 3, figsize=(18, 10), dpi=400)
 axes = axes.flatten()
+
+# 网络显示名称映射
+display_names = {
+    "Hypertext2009": "Hypertext2009",
+    "Thiers12": "Thiers12",
+    "InVS15": "InVS15",
+    "LyonSchool": "LyonSchool",
+    "SIS": "ER",
+    "Ising": "BA"
+}
 
 for i, network in enumerate(network_file_mapping.keys()):
     if network not in your_method_scores:
@@ -129,8 +155,8 @@ for i, network in enumerate(network_file_mapping.keys()):
     ax.plot(T_list, m2_scores, marker='^', markersize=7, linewidth=2.0,
             label='DSR', color='brown', linestyle='-.')  # 棕色点划线，与第一个图一致
 
-    # 设置标题和标签 - 放大字体
-    ax.set_title(f'{network}', fontsize=22, fontweight='bold')  # 放大标题
+    # 设置标题和标签 - 使用显示名称
+    ax.set_title(f'{display_names[network]}', fontsize=22, fontweight='bold')  # 放大标题
     ax.set_xlabel('T', fontsize=22)  # 放大横坐标标签
     ax.set_ylabel('F1', fontsize=22)  # 放大纵坐标标签
 
@@ -172,7 +198,7 @@ for i, network in enumerate(network_file_mapping.keys()):
     legend.get_frame().set_linewidth(1.5)
     legend.get_frame().set_boxstyle('Square')
 
-# 四个子图间距稍大 - 保持相同的布局设置
+# 六个子图间距稍大 - 保持相同的布局设置
 plt.tight_layout(h_pad=2.0, w_pad=2.0)
 
 # 保存图片
